@@ -215,5 +215,9 @@ RUN echo '[supervisord]' > /etc/supervisor/conf.d/supervisord.conf && \
   echo 'stderr_logfile=/dev/stderr' >> /etc/supervisor/conf.d/supervisord.conf && \
   echo 'stderr_logfile_maxbytes=0' >> /etc/supervisor/conf.d/supervisord.conf
 
-# Start supervisord to manage both services
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+# Copy entrypoint script for Railway/PaaS dynamic port support
+COPY deploy/entrypoint.sh /usr/src/app/deploy/entrypoint.sh
+RUN chmod +x /usr/src/app/deploy/entrypoint.sh
+
+# Start via entrypoint (handles dynamic PORT for Railway)
+CMD ["/usr/src/app/deploy/entrypoint.sh"]
