@@ -1,13 +1,14 @@
 import { createParser, ParsedEvent, ReconnectInterval } from "eventsource-parser";
+import { authFetch } from "../helpers/authFetch";
 
 export async function handleSourcesAndAnswer(question: string) {
-  let sourcesResponse = await fetch("/api/getSources", {
+  let sourcesResponse = await authFetch("/api/getSources", {
     method: "POST",
     body: JSON.stringify({ question }),
   });
   let sources = await sourcesResponse.json();
 
-  const response = await fetch("/api/getAnswer", {
+  const response = await authFetch("/api/getAnswer", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -56,7 +57,7 @@ export async function handleSourcesAndAnswer(question: string) {
 }
 
 export async function handleSimilarQuestions(question: string) {
-  let res = await fetch("/api/getSimilarQuestions", {
+  let res = await authFetch("/api/getSimilarQuestions", {
     method: "POST",
     body: JSON.stringify({ question }),
   });
@@ -65,7 +66,7 @@ export async function handleSimilarQuestions(question: string) {
 }
 
 export async function handleLanggraphAnswer(question: string) {
-  const response = await fetch("/api/generateLanggraph", {
+  const response = await authFetch("/api/generateLanggraph", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

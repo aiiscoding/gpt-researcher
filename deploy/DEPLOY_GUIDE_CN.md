@@ -13,7 +13,8 @@
 5. [访问你的应用](#5-访问你的应用)
 6. [日常维护](#6-日常维护)
 7. [配置 HTTPS（可选）](#7-配置-https可选)
-8. [常见问题](#8-常见问题)
+8. [数据安全](#8-数据安全)
+9. [常见问题](#9-常见问题)
 
 ---
 
@@ -66,18 +67,49 @@
 > **国内服务器注意**：如果使用 OpenAI 官方 API，需要配置代理地址（OPENAI_BASE_URL），
 > 或使用兼容 OpenAI 接口的国内大模型（如通义千问、DeepSeek 等）。
 
-#### 方案 B：海外服务器（直接用 OpenAI，无需代理）
+#### 方案 B：海外服务器（推荐！直接用 OpenAI/Tavily，无需代理）
 
-**DigitalOcean：**
-1. 打开 https://www.digitalocean.com/
-2. 创建 Droplet
-3. 选择 Ubuntu 24.04，Basic Plan，$24/月（4GB 内存）
-4. 选择离你近的数据中心（新加坡推荐）
-5. 设置 SSH 密钥或密码
+> **为什么推荐海外服务器？**
+> - Tavily 搜索 API 在国内无法直接访问
+> - OpenAI API 在国内也需要代理
+> - 海外服务器省去所有网络问题，开箱即用
 
-**Vultr：**
-1. 打开 https://www.vultr.com/
-2. 类似 DigitalOcean 的流程
+**推荐 1：DigitalOcean（最适合新手）**
+1. 打开 https://www.digitalocean.com/ 注册账号
+2. 点击 Create → Droplets
+3. 配置选择：
+   - **地区**：Singapore（新加坡）— 国内连接延迟最低
+   - **镜像**：Ubuntu 24.04 LTS
+   - **规格**：Basic → Regular，$24/月（4GB 内存）即可
+   - **认证**：选 Password，设置 root 密码
+4. 点击 Create Droplet
+5. 等待创建完成，记下显示的 IP 地址
+6. 支持支付宝付款
+
+**推荐 2：Vultr（性价比高）**
+1. 打开 https://www.vultr.com/ 注册
+2. 点击 Deploy New Server
+3. 配置：
+   - **类型**：Cloud Compute - Shared CPU
+   - **地区**：Tokyo（东京）或 Singapore（新加坡）
+   - **镜像**：Ubuntu 24.04
+   - **规格**：$24/月（4GB 内存）
+4. 支持支付宝/微信付款
+
+**推荐 3：AWS Lightsail（稳定可靠）**
+1. 打开 https://lightsail.aws.amazon.com/
+2. 创建实例 → Linux → Ubuntu 24.04
+3. 选择 $20/月（4GB 内存）套餐
+4. 地区选 ap-southeast-1（新加坡）
+
+**价格对比：**
+
+| 平台 | 4GB 内存方案 | 月费 | 支付宝 | 推荐地区 |
+|------|-------------|------|--------|---------|
+| DigitalOcean | Basic Regular | $24 | 支持 | 新加坡 |
+| Vultr | Cloud Compute | $24 | 支持 | 东京/新加坡 |
+| AWS Lightsail | 4GB | $20 | 支持 | 新加坡 |
+| Linode | Shared 4GB | $24 | 不支持 | 东京 |
 
 ### 开放端口（所有平台都需要！）
 
@@ -268,7 +300,74 @@ AUTH_COOKIE_SECURE=true
 
 ---
 
-## 8. 常见问题
+## 8. 数据安全
+
+### 数据如何存储？
+
+系统使用 **SQLite 数据库** 存储聊天记录和研究报告（文件：`data/reports.db`）：
+- **WAL 模式**：即使服务器突然断电，数据也不会损坏
+- **ACID 事务**：每次写入都是原子操作，不会出现半截数据
+- **文件锁**：多个请求同时访问也不会冲突
+
+### 定时备份
+
+**手动备份：**
+
+```bash
+cd /root/gpt-researcher
+bash deploy/backup.sh
+```
+
+备份文件保存在 `backups/` 目录，包含数据库和研究报告。
+
+**设置自动备份（每天凌晨 3 点）：**
+
+```bash
+crontab -e
+```
+
+添加这一行：
+
+```
+0 3 * * * cd /root/gpt-researcher && bash deploy/backup.sh
+```
+
+### 下载备份到本地
+
+```bash
+# 在你自己的电脑上运行（不是服务器上）
+scp root@你的服务器IP:/root/gpt-researcher/backups/最新的备份文件.tar.gz ./
+```
+
+### 安全建议清单
+
+| 建议 | 重要性 | 说明 |
+|------|--------|------|
+| 配置 HTTPS | 必须 | 加密传输，防止密码被窃听 |
+| 修改默认密码 | 必须 | 不要用默认的 admin:admin123 |
+| 修改 AUTH_SECRET_KEY | 必须 | 部署脚本会自动生成随机密钥 |
+| 定时备份 | 强烈建议 | 防止数据丢失 |
+| 限制 SSH 登录 | 建议 | 使用 SSH 密钥登录，禁用密码登录 |
+| 配置防火墙 | 建议 | 只开放必要端口（22、443） |
+
+### 加固 SSH 安全（可选）
+
+```bash
+# 生成 SSH 密钥（在你自己电脑上执行）
+ssh-keygen -t ed25519
+
+# 复制公钥到服务器
+ssh-copy-id root@你的服务器IP
+
+# 测试密钥登录成功后，禁用密码登录
+# 编辑服务器上的 /etc/ssh/sshd_config：
+#   PasswordAuthentication no
+# 然后重启 SSH：systemctl restart sshd
+```
+
+---
+
+## 9. 常见问题
 
 ### Q: 构建失败，提示网络超时怎么办？
 

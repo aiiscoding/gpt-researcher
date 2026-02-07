@@ -2,6 +2,7 @@ import React, { useRef, useState, useEffect } from "react";
 import { useResearchHistoryContext } from "@/hooks/ResearchHistoryContext";
 import MobileChatPanel from "@/components/mobile/MobileChatPanel";
 import { ChatBoxSettings, Data, ChatData, QuestionData, ChatMessage } from "@/types/data";
+import { authFetch } from "@/helpers/authFetch";
 import { toast } from "react-hot-toast";
 
 interface MobileResearchContentProps {
@@ -113,7 +114,7 @@ export default function MobileResearchContent({
       }));
       
       // Directly call the chat API
-      const response = await fetch('/api/chat', {
+      const response = await authFetch('/api/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
