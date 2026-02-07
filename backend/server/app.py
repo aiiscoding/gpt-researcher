@@ -150,9 +150,9 @@ DOC_PATH = os.getenv("DOC_PATH", "./my-docs")
 # ─── Authentication Routes ───────────────────────────────────────────────────
 
 @app.post("/api/auth/login")
-async def login(req: LoginRequest):
+async def login(req: LoginRequest, request: Request):
     """Authenticate with preset credentials and receive a token."""
-    username = authenticate_user(req.username, req.password)
+    username = authenticate_user(req.username, req.password, request=request)
     if not username:
         raise HTTPException(status_code=401, detail="Invalid username or password")
     token = create_token(username)

@@ -1,6 +1,7 @@
 """
 Authentication module for GPT Researcher.
 Provides JWT-based authentication with preset accounts (no registration).
+Includes brute-force protection with IP-based rate limiting.
 """
 
 import os
@@ -9,6 +10,7 @@ import hashlib
 import hmac
 import json
 import logging
+from collections import defaultdict
 from typing import Optional
 from fastapi import HTTPException, Request, WebSocket, status
 from pydantic import BaseModel
@@ -21,6 +23,11 @@ TOKEN_EXPIRE_HOURS = int(os.getenv("AUTH_TOKEN_EXPIRE_HOURS", "24"))
 
 # Whether auth is enabled (disabled by default for local dev)
 AUTH_ENABLED = os.getenv("AUTH_ENABLED", "false").lower() == "true"
+
+# Brute-force protection: max failed attempts per IP before lockout
+_MAX_FAILED_ATTEMPTS = int(os.getenv("AUTH_MAX_FAILED_ATTEMPTS", "5"))
+_LOCKOUT_SECONDS = int(os.getenv("AUTH_LOCKOUT_SECONDS", "900"))  # 15 minutes
+_failed_attempts: dict[str, list[float]] = defaultdict(list)
 
 
 class LoginRequest(BaseModel):
@@ -86,11 +93,61 @@ def verify_token(token: str) -> Optional[str]:
         return None
 
 
-def authenticate_user(username: str, password: str) -> Optional[str]:
-    """Check credentials against preset users. Returns username if valid."""
+def _get_client_ip(request: Request) -> str:
+    """Get client IP, respecting X-Forwarded-For behind reverse proxy."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    if request.client:
+        return request.client.host
+    return "unknown"
+
+
+def _check_rate_limit(ip: str) -> None:
+    """Raise 429 if the IP has too many recent failed login attempts."""
+    now = time.time()
+    cutoff = now - _LOCKOUT_SECONDS
+    # Clean old entries
+    _failed_attempts[ip] = [t for t in _failed_attempts[ip] if t > cutoff]
+    if len(_failed_attempts[ip]) >= _MAX_FAILED_ATTEMPTS:
+        remaining = int(_LOCKOUT_SECONDS - (now - _failed_attempts[ip][0]))
+        logger.warning(f"Login rate limit hit for IP {ip}, locked for {remaining}s")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many failed attempts. Try again in {remaining} seconds.",
+        )
+
+
+def _record_failed_attempt(ip: str) -> None:
+    """Record a failed login attempt for rate limiting."""
+    _failed_attempts[ip].append(time.time())
+
+
+def _clear_failed_attempts(ip: str) -> None:
+    """Clear failed attempts on successful login."""
+    _failed_attempts.pop(ip, None)
+
+
+def authenticate_user(username: str, password: str, request: Optional[Request] = None) -> Optional[str]:
+    """Check credentials against preset users. Returns username if valid.
+    Enforces rate limiting when request is provided.
+    """
+    if request:
+        ip = _get_client_ip(request)
+        _check_rate_limit(ip)
+
     users = _get_preset_users()
     if username in users and users[username] == password:
+        if request:
+            _clear_failed_attempts(_get_client_ip(request))
         return username
+
+    if request:
+        ip = _get_client_ip(request)
+        _record_failed_attempt(ip)
+        attempts_left = _MAX_FAILED_ATTEMPTS - len(_failed_attempts[ip])
+        logger.warning(f"Failed login for '{username}' from {ip} ({attempts_left} attempts left)")
+
     return None
 
 
