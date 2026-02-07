@@ -1,4 +1,4 @@
-# GPT-Researcher 学习计划（AI 编程时代版）
+# GPT-Researcher 学习笔记（AI 编程时代版）
 
 > **核心理念：你负责"知道在哪、为什么、要什么"，AI 负责"怎么写"**
 > 基于 v0.14.6 源码 | 目标：用 AI 高效运维和二次开发
@@ -19,75 +19,133 @@ AI 时代学习：**理解架构地图 → 掌握业务语义 → 学会向 AI �
 
 ---
 
-## 阶段一：架构地图（大脑中的 GPS）
+# 第一部分：已完成学习内容
 
-> 目标：闭上眼能画出系统全貌，任何需求都能 3 秒定位到相关模块
+---
+
+## 一、架构地图（大脑中的 GPS）
 
 ### 1.1 一句话理解项目
 
-- [ ] GPT-Researcher = **用户提问 → AI 自动搜索多个来源 → 抓取内容 → 分析整合 → 生成研究报告**
-- [ ] 本质是一个 **LLM 编排系统**，核心价值是串联"搜索-抓取-分析-写作"这条链路
+- [x] GPT-Researcher = **用户提问 → AI 自动搜索多个来源 → 抓取内容 → 分析整合 → 生成研究报告**
+- [x] 本质是一个 **LLM 编排系统**，核心价值是串联"搜索-抓取-分析-写作"这条链路
 
 ### 1.2 四个入口，一个核心
 
 ```
 用户怎么触发研究？
 ├── cli.py              → 命令行直接跑
-├── main.py             → 启动 Web 服务（FastAPI）
+├── main.py             → 启动 Web 服务（FastAPI 端口8000）
 ├── Python API          → from gpt_researcher import GPTResearcher
 └── multi_agents/main.py → 多 Agent 模式
 
 所有入口最终都调用 → GPTResearcher 类（gpt_researcher/agent.py）
 ```
 
-- [ ] 掌握这四个入口的启动方式和适用场景
-- [ ] 理解：**agent.py 是唯一需要你建立全局理解的文件**，其他都是它调用的子模块
+### 1.3 agent.py 的三个关键动作
 
-### 1.3 数据流（最重要的心智模型）
+GPTResearcher 对外只暴露 3 步：
+
+```python
+researcher = GPTResearcher(query="...", report_type="research_report")
+await researcher.conduct_research()   # 第1步：收集信息
+report = await researcher.write_report()  # 第2步：写报告
+# 第3步：输出（Markdown/PDF/DOCX）
+```
+
+`__init__` 初始化顺序揭示了依赖关系：
+```
+Config → Retrievers → Memory(向量嵌入) → 各种 Skill 组件
+```
+所有 Skill 组件都接收 `self`（GPTResearcher 实例），形成**中心辐射型架构**。
+
+### 1.4 数据流全景图（最重要的心智模型）
 
 ```
-用户查询
-  │
-  ▼
-┌─────────────────┐
-│ 查询规划         │  LLM 把一个大问题拆成多个子查询
-│ query_processing │
-└────────┬────────┘
-         │  生成 N 个子查询
-         ▼
-┌─────────────────┐
-│ 搜索执行         │  14种搜索引擎任选，每个子查询独立搜索
-│ retrievers/      │
-└────────┬────────┘
-         │  返回 URL 列表
-         ▼
-┌─────────────────┐
-│ 内容抓取         │  并发抓取网页/PDF/论文内容
-│ scraper/         │
-└────────┬────────┘
-         │  返回原始文本
-         ▼
-┌─────────────────┐
-│ 上下文压缩       │  用向量嵌入 + LLM 筛选相关内容
-│ context/         │
-└────────┬────────┘
-         │  精炼后的上下文
-         ▼
-┌─────────────────┐
-│ 报告生成         │  LLM 根据上下文写报告
-│ skills/writer    │
-└────────┬────────┘
+"什么是向量数据库" (用户输入)
          │
-         ▼
-    最终报告（Markdown/PDF/DOCX）
+    ┌────▼──────┐
+    │ choose_agent │  让 LLM 决定用什么"人设"来研究
+    └────┬──────┘  （用 SMART_LLM）
+         │
+    ┌────▼──────┐
+    │  初次搜索   │  用第一个 Retriever 搜索，获取背景知识
+    └────┬──────┘
+         │
+    ┌────▼──────┐
+    │ LLM 拆查询 │  plan_research_outline()
+    └────┬──────┘  "请把这个问题拆成子问题"（用 FAST_LLM）
+         │
+         ├── "向量数据库的核心原理是什么"
+         ├── "向量数据库有哪些主流产品"
+         ├── "向量数据库的应用场景"
+         └── "什么是向量数据库"（原查询也加进去）
+                │
+    ┌───────────▼───────────┐
+    │   asyncio.gather 并行   │  所有子查询同时跑（不排队）
+    └───────────┬───────────┘
+                │
+    ┌───────────▼───────────────────────────────────────┐
+    │  每个子查询独立执行 _process_sub_query()            │
+    │                                                    │
+    │  1. 搜索: _search_relevant_source_urls()           │
+    │     → 遍历所有 Retriever（Tavily、DuckDuckGo 等）  │
+    │     → 每个 Retriever.search(query, max_results=5)  │
+    │     → 去重 + 打乱顺序 → 返回 URL 列表              │
+    │                                                    │
+    │  2. 抓取: scraper_manager.browse_urls(urls)        │
+    │     → 并发访问 URL，抓取网页内容                     │
+    │     → MAX_SCRAPER_WORKERS=15 控制并发数             │
+    │                                                    │
+    │  3. 压缩: context_manager.get_similar_content...() │
+    │     → 分块(1000字/块) → 向量化 → 相似度过滤         │
+    │     → SIMILARITY_THRESHOLD=0.35 控制过滤严格度       │
+    │     → 只保留与子查询相关的段落                       │
+    └───────────┬───────────────────────────────────────┘
+                │
+    ┌───────────▼───────────┐
+    │  合并所有子查询的结果     │ → self.context
+    └───────────┬───────────┘
+                │
+    ┌───────────▼───────────┐
+    │  source_curator（可选） │  来源质量排序（curate_sources=True 时）
+    └───────────┬───────────┘
+                │
+    ┌───────────▼───────────┐
+    │  write_report()        │ → SMART_LLM 根据 context 写报告
+    └───────────┬───────────┘
+                │
+           最终报告 (Markdown/PDF/DOCX)
 ```
 
-- [ ] **能用自己的话复述这个流程** — 这是你向 AI 描述需求的基础
-- [ ] 理解每个阶段的输入和输出是什么
+### 1.5 conduct_research() 的数据源路由
 
-### 1.4 模块功能速查表
+`researcher.py:89-211` 是一个大路由器，根据 `report_source` 走不同分支：
 
-> 当你想改某个功能时，3 秒定位到目录
+| report_source | 走哪条路 | 占比 |
+|---------------|---------|------|
+| `web` | `_get_context_by_web_search()` | 90% 场景 |
+| `local` | 先读本地文档 → 再走搜索 | |
+| `hybrid` | 本地文档 + 网页搜索 → 合并 | |
+| `azure` | Azure Blob 加载 → 再走搜索 | |
+| `langchain_documents` | LangChain 文档对象 | |
+| `langchain_vectorstore` | 直接走向量库 | |
+
+另外 Deep 模式（`agent.py:348`）直接 `return`，走 `deep_research.py` 完全独立的分支。
+
+### 1.6 流水线工厂比喻
+
+| 工位 | 对应代码 | 做什么 | 比喻 |
+|------|---------|--------|------|
+| 调度员 | `agent.py` | 总指挥，串联所有步骤 | 工厂厂长 |
+| 拆解员 | `actions/query_processing.py` | 把大问题拆成小问题 | 项目经理拆任务 |
+| 搜索员 | `retrievers/` | 去各个搜索引擎找资料 | 助理搜信息 |
+| 抓取员 | `scraper/` | 把网页内容扒下来 | 助理把文章复印下来 |
+| 筛选员 | `context/` + `memory/` | 从大量内容中筛选相关的 | 编辑划重点 |
+| 写作员 | `skills/writer.py` | 根据筛选后的内容写报告 | 作家写稿 |
+| 配置中心 | `config/` + `.env` | 控制所有人的行为参数 | HR和行政部 |
+
+### 1.7 模块功能速查表
 
 | 我想改... | 去找... | 路径 |
 |-----------|---------|------|
@@ -106,237 +164,296 @@ AI 时代学习：**理解架构地图 → 掌握业务语义 → 学会向 AI �
 | 前端 UI | Frontend | `frontend/nextjs/` |
 | 部署配置 | Docker/Terraform | 根目录 `Dockerfile`, `terraform/` |
 
-- [ ] **打印或收藏这张表** — 这是你与 AI 协作时最常用的"导航"
-
 ---
 
-## 阶段二：配置即控制（不写代码就能改行为）
+## 二、配置即控制
 
-> 目标：80% 的需求变更可以通过改配置解决，不需要碰代码
+### 2.1 配置加载机制
 
-### 2.1 配置系统原理
+`config.py:62-75` 的核心逻辑：
 
-- [ ] 配置优先级：**环境变量 > JSON 配置文件 > 代码默认值**
-- [ ] 配置文件位置：`.env`（主要）、`gpt_researcher/config/variables/default.py`（默认值参考）
-
-### 2.2 必须熟记的配置项
-
-**不需要记值，记住"有这个开关"就行，具体改的时候让 AI 帮你：**
-
-| 类别 | 配置项 | 你要知道的 |
-|------|--------|-----------|
-| **LLM 选择** | `FAST_LLM` / `SMART_LLM` / `STRATEGIC_LLM` | 三级模型策略，不同任务用不同模型控制成本和质量 |
-| **搜索引擎** | `RETRIEVER` | 切换搜索来源（tavily/duckduckgo/google/bing 等 14 种） |
-| **抓取方式** | `SCRAPER` | 换抓取器（bs=静态页面 / browser=动态页面 / pymupdf=PDF） |
-| **报告类型** | `REPORT_TYPE` | 7 种报告类型，决定输出格式和深度 |
-| **字数控制** | `TOTAL_WORDS` | 报告长度 |
-| **搜索结果数** | `MAX_SEARCH_RESULTS_PER_QUERY` | 每个子查询取多少条结果 |
-| **并发数** | `MAX_SCRAPER_WORKERS` | 同时抓取多少网页 |
-| **深度研究** | `DEEP_RESEARCH_BREADTH` / `DEPTH` / `CONCURRENCY` | 控制深度研究的广度、深度和并发 |
-| **温度** | `TEMPERATURE` | LLM 创造性程度 |
-| **嵌入模型** | `EMBEDDING` | 向量嵌入模型选择 |
-| **提示词族** | `PROMPT_FAMILY` | 切换整套提示词风格 |
-
-- [ ] 实操练习：**只改 `.env`，分别用不同的 LLM、不同的搜索引擎、不同的报告类型跑一遍**
-- [ ] 理解：大部分"我想让报告更长/更短/换个模型/换个搜索引擎"的需求 → 改配置就行
-
-### 2.3 AI 协作话术示例
-
-> 当你需要改配置时，这样跟 AI 说：
-
-```
-"帮我把搜索引擎从 tavily 换成 duckduckgo，我不想付 API 费用"
-"我想让深度研究更深入一些，帮我调整 DEEP_RESEARCH_DEPTH 和 BREADTH"
-"帮我看看 .env 里哪些配置可以优化 LLM 调用成本"
+```python
+for key, value in config.items():
+    env_value = os.getenv(key)        # 先看环境变量有没有
+    if env_value is not None:
+        value = self.convert_env_value(...)  # 有就用环境变量的
+    setattr(self, key.lower(), value)  # 设到 self 上，key 变小写
 ```
 
----
+**优先级：环境变量 > JSON 配置文件 > DEFAULT_CONFIG 默认值**
 
-## 阶段三：扩展点地图（知道在哪里插入新能力）
+### 2.2 配置项速查
 
-> 目标：知道系统的"插槽"在哪里，需要扩展时能精准告诉 AI 该怎么加
+| 类别 | 配置项 | 默认值 | 你要知道的 |
+|------|--------|--------|-----------|
+| **LLM** | `FAST_LLM` | `openai:gpt-4o-mini` | 快速任务，便宜 |
+| | `SMART_LLM` | `openai:gpt-4.1` | 报告写作，质量好 |
+| | `STRATEGIC_LLM` | `openai:o4-mini` | 复杂推理，最贵 |
+| **搜索** | `RETRIEVER` | `tavily` | 14 种可选，逗号分隔可混合 |
+| | `MAX_SEARCH_RESULTS_PER_QUERY` | `5` | 每个子查询取多少条 |
+| **抓取** | `SCRAPER` | `bs` | bs/browser/pymupdf/firecrawl |
+| | `MAX_SCRAPER_WORKERS` | `15` | 并发抓取数 |
+| **压缩** | `SIMILARITY_THRESHOLD` | `0.35`（代码）/ `0.42`（配置） | 向量相似度过滤阈值 |
+| | `EMBEDDING` | `openai:text-embedding-3-small` | 向量嵌入模型 |
+| **报告** | `REPORT_TYPE` | `research_report` | 7 种类型 |
+| | `TOTAL_WORDS` | `1200` | 报告字数 |
+| | `TEMPERATURE` | `0.4` | LLM 创造性 |
+| | `LANGUAGE` | `english` | 输出语言 |
+| **深度研究** | `DEEP_RESEARCH_BREADTH` | `3` | 广度 |
+| | `DEEP_RESEARCH_DEPTH` | `2` | 深度 |
+| | `DEEP_RESEARCH_CONCURRENCY` | `4` | 并发 |
+| **其他** | `MAX_SUBTOPICS` | `3` | 子查询拆分数量上限 |
+| | `PROMPT_FAMILY` | `default` | 提示词风格族 |
+| | `CURATE_SOURCES` | `False` | 是否启用来源排序 |
 
-### 3.1 六大扩展点
+### 2.3 配置实验手册
 
-| 扩展点 | 场景 | 怎么扩展 | 你要知道的 |
-|--------|------|---------|-----------|
-| **新搜索引擎** | 想接入企业内部搜索 | 在 `retrievers/` 下新建目录，继承 `CustomRetriever` | 接口只有一个 `search()` 方法 |
-| **新抓取器** | 需要抓取特殊格式 | 在 `scraper/` 下新建目录 | 输入 URL，输出纯文本 |
-| **新 LLM** | 换模型供应商 | 改 `provider:model` 配置 | 大部分 LangChain 支持的都能直接用 |
-| **新提示词** | 想改研究/写作风格 | 自定义 `PROMPT_FAMILY` | 提示词在 `prompts.py` |
-| **新报告类型** | 需要特殊输出格式 | 在 `backend/report_type/` 扩展 | 每种类型一个 Agent |
-| **MCP 工具** | 接入外部数据源/工具 | 配置 MCP Server | 最灵活的扩展方式 |
-
-- [ ] 理解每个扩展点的"输入→输出契约"（接口长什么样）
-- [ ] 不需要记住实现细节，但要知道**扩展点在哪个目录、接口叫什么名字**
-
-### 3.2 AI 协作话术示例
-
+所有实验基于命令：
+```bash
+python cli.py "什么是向量数据库" --report_type research_report --no-pdf --no-docx
 ```
-"帮我新建一个 Retriever，接入我们公司的 Elasticsearch，
-参考 gpt_researcher/retrievers/tavily/ 的结构"
 
-"帮我写一个 MCP Server，把我们的内部知识库暴露给 GPT-Researcher 使用"
+| 实验 | 改什么 | 命令前缀 | 观察什么 |
+|------|--------|---------|---------|
+| **切换搜索引擎** | `RETRIEVER` | `RETRIEVER=duckduckgo` | URL 来源差异、结果质量 |
+| **调搜索结果数** | `MAX_SEARCH_RESULTS_PER_QUERY` | `MAX_SEARCH_RESULTS_PER_QUERY=2` vs `=10` | 丰富度 vs 速度 |
+| **切换写作模型** | `SMART_LLM` | `SMART_LLM=openai:gpt-4o-mini` | 报告质量 vs 成本 |
+| **控制报告长度** | `TOTAL_WORDS` + `MAX_SUBTOPICS` | `TOTAL_WORDS=500 MAX_SUBTOPICS=2` | 深度 vs 速度 |
+| **不同报告类型** | `--report_type` | 分别跑 `research_report`/`outline_report`/`resource_report` | 输出格式差异 |
 
-"我想加一种新的报告类型叫 brief_report，只输出要点摘要，
-参考 backend/report_type/ 下现有的实现"
+**核心直觉：**
+```
+想省钱？       → SMART_LLM 降级, MAX_SEARCH_RESULTS 减少
+想更快？       → report_type 用 outline, TOTAL_WORDS 减少
+想更全面？     → MAX_SEARCH_RESULTS 调大, MAX_SUBTOPICS 调大
+想更高质量？   → SMART_LLM 升级, RETRIEVER 用 tavily
+想限定来源？   → --query_domains 指定域名
+想输出中文？   → LANGUAGE=chinese
 ```
 
 ---
 
-## 阶段四：数据流与接口边界（精准描述需求的基础）
+## 三、上下文压缩机制（报告质量的关键）
 
-> 目标：理解模块间如何通信，这样你才能精准告诉 AI "从 A 到 B 中间要加个 C"
+### 3.1 为什么需要压缩
 
-### 4.1 核心接口契约
+抓取 5 个网页可能产生 5-10 万字原始内容，但 LLM 上下文窗口有限且 90% 是噪音（导航栏、广告、无关段落）。喂太多垃圾进去报告质量反而差。
 
-**你不需要看实现代码，只需要知道每个模块的"输入→输出"：**
-
-| 模块 | 输入 | 输出 |
-|------|------|------|
-| **QueryProcessing** | 用户原始查询（字符串） | 子查询列表 + 研究大纲 |
-| **Retriever** | 查询字符串 + max_results | `List[Dict]`（URL + 标题 + 摘要） |
-| **Scraper** | URL 列表 | 纯文本内容列表 |
-| **ContextCompressor** | 大量原始文本 + 查询 | 精炼后的相关上下文 |
-| **ReportGenerator** | 上下文 + 查询 + 报告类型 | Markdown 格式报告 |
-| **Memory/Embedding** | 文本 | 向量 → 相似度匹配 |
-
-- [ ] 理解这些接口，你就能对 AI 说"我想在 Scraper 输出之后、ContextCompressor 之前加一个过滤步骤"
-
-### 4.2 三级 LLM 策略（成本控制的关键）
+### 3.2 压缩管道：三步流水线
 
 ```
-FAST_LLM    → 子查询生成、简单判断     → 便宜、快
-SMART_LLM   → 报告撰写、内容分析       → 中等
-STRATEGIC_LLM → 复杂推理、研究规划      → 贵、强
+第 1 步：分块 (RecursiveCharacterTextSplitter)
+   原始网页（几万字）→ 切成 1000 字一块，相邻块 100 字重叠
+   → 输出: [chunk1, chunk2, ... chunk50]
+
+第 2 步：向量相似度过滤 (EmbeddingsFilter)
+   查询 "向量数据库的核心原理" → Embedding 模型 → [0.12, -0.34, 0.56, ...]
+   每个 chunk → Embedding 模型 → [向量]
+   计算 cosine 相似度 → 只保留 > SIMILARITY_THRESHOLD 的 chunk
+   → 50 个 chunk 可能只剩 5-8 个
+
+第 3 步：格式化输出 (pretty_print_docs)
+   筛选后的 chunk → 拼接 + 附上来源 URL → 输出给 LLM 写报告
 ```
 
-- [ ] 理解哪些步骤用哪个级别的 LLM（直接影响成本和质量）
-- [ ] 知道可以通过调整这三个配置来平衡成本和质量
+代码位置：`compression.py:121-140`
+
+### 3.3 向量嵌入 30 秒理解
+
+```
+"向量数据库的核心原理"    → [0.12, -0.34, 0.56, ...]  (1536维)
+"向量检索使用余弦相似度"  → [0.11, -0.32, 0.55, ...]  ← 很接近！相似度 0.92
+"今天天气真好"            → [0.87, 0.22, -0.63, ...]  ← 差很远！相似度 0.08
+```
+
+**本质：把文字变成数字列表，语义相近的文字数字也相近。**
+
+### 3.4 三个调节旋钮
+
+| 参数 | 代码位置 | 默认 | 作用 |
+|------|---------|------|------|
+| `chunk_size` | `compression.py:128` | 1000 | 每块多大 |
+| `chunk_overlap` | `compression.py:128` | 100 | 相邻块重叠 |
+| `SIMILARITY_THRESHOLD` | `compression.py:118` | 0.35 | **最关键** |
+
+SIMILARITY_THRESHOLD 效果直觉：
+```
+0.2  → 几乎全留（宽松）→ 内容多但噪音也多
+0.35 → 默认值（平衡）
+0.5  → 比较严格 → 只留高度相关段落
+0.7  → 非常严格 → 可能误杀有价值内容
+```
+
+**实际场景调节：**
+- 报告内容太少/太浅？ → 阈值调低（0.2-0.3）
+- 报告废话太多/跑题？ → 阈值调高（0.45-0.55）
+- 中文查询 + 英文网页？ → 跨语言相似度天然低，阈值必须调低
+
+### 3.5 Memory 类
+
+`memory/embeddings.py` 是一个纯粹的 **Embedding 供应商选择器**，支持 17 种供应商，接口完全统一。换供应商只需改 `.env`：
+```bash
+EMBEDDING=openai:text-embedding-3-small   # 付费，质量最好
+EMBEDDING=ollama:nomic-embed-text         # 本地免费
+```
 
 ---
 
-## 阶段五：故障定位能力（运维的核心技能）
+## 四、故障排查实战手册
 
-> 目标：出问题时能快速缩小范围，给 AI 精准的错误上下文
-
-### 5.1 故障定位决策树
+### 4.1 日志阶段标志（定位问题的第一步）
 
 ```
-报告生成失败
-├── 搜索阶段失败？
-│   ├── API Key 问题 → 检查 .env 中对应的 KEY
-│   ├── 网络问题 → 检查代理/防火墙
-│   └── Retriever 不支持 → 检查 RETRIEVER 配置
+"🔍 Starting the research task..."     → 刚进入流水线
+"🌐 Browsing the web..."              → 进入搜索阶段
+"🤔 Planning the research strategy..." → 进入查询规划
+"🗂️ I will conduct my research..."     → 子查询已生成
+"🔍 Running research for '子查询'..."   → 正在执行子查询
+"🤔 Researching for relevant info..."  → 正在抓取
+"📚 Getting relevant content..."       → 正在上下文压缩
+"💸 Total Research Costs: $xxx"        → 研究阶段完成
+报告内容输出                            → 写作阶段完成
+```
+
+**日志停在哪里，问题就在那一步。**
+
+### 4.2 场景 1：用户点击"开始研究"，页面完全无反应
+
+**现象：** 前端点了按钮什么都没发生，控制台也没日志
+
+**排查：**
+```
+页面无反应
+├── 浏览器 F12 → Network 面板 → 有没有请求发出去？
 │
-├── 抓取阶段失败？
-│   ├── 网站反爬 → 换 SCRAPER=browser 或 firecrawl
-│   ├── 超时 → 调大 timeout 或减少 MAX_SCRAPER_WORKERS
-│   └── 内容为空 → 检查 URL 可达性
+├── 没有请求 → 前端问题
+│   → 检查 NEXT_PUBLIC_GPTR_API_URL 是否指向正确后端地址
+│   → 看 frontend/nextjs/ 的 WebSocket 配置
 │
-├── LLM 调用失败？
-│   ├── API Key/额度 → 检查 Provider 配置
-│   ├── Token 超限 → 减少上下文或换更大窗口的模型
-│   └── 模型不存在 → 检查 provider:model 格式
+└── 请求发了但没响应 → 后端问题
+    → main.py 是否启动？端口是否正确？
+```
+
+**定位：** 卡在基础设施层，**根本没进入研究流水线**。
+
+### 4.3 场景 2：卡在 "Planning the research strategy" 不动了
+
+**现象：** 看到 "🌐 Browsing the web..." 之后等 5 分钟没动
+
+**排查：**
+```
+卡在 planning 阶段（researcher.py:48-87）
 │
-└── 报告质量差？
-    ├── 搜索结果不相关 → 调整 RETRIEVER 或加 query_domains
-    ├── 上下文被过度压缩 → 调整 SIMILARITY_THRESHOLD
-    └── 写作风格不对 → 调整 TONE 或 PROMPT_FAMILY
+│  这个阶段做两件事：
+│    1. get_search_results()  → 用 Retriever 搜索
+│    2. plan_research_outline() → 让 LLM 拆子查询
+│
+├── "🌐" 之后没出现 "🤔" → 卡在搜索
+│   → Retriever API 无响应（网络/API Key/服务不可用）
+│   → 检查 TAVILY_API_KEY 或 RETRIEVER 配置
+│
+└── "🤔" 出现了但没下文 → 卡在 LLM 调用
+    → OPENAI_API_KEY 无效/额度不足/网络问题
 ```
 
-- [ ] **收藏这棵决策树** — 出问题时按图索骥，缩小范围后再让 AI 帮你修
+### 4.4 场景 3：搜索抓取正常，但报告几乎为空
 
-### 5.2 日志与调试
+**现象：** 日志看起来一切正常，URL 搜到了也抓了，但报告只有两三句话
 
-- [ ] 掌握日志查看方式（Loguru 输出在控制台）
-- [ ] 了解 LangSmith 追踪：
-  ```bash
-  LANGCHAIN_TRACING_V2=true
-  LANGCHAIN_API_KEY=xxx
-  ```
-  开启后可以在 LangSmith 网页上看到每一步 LLM 调用的详情
-- [ ] 理解：出问题时最有效的方式是 **复制错误日志 + 指出你认为的故障阶段 → 发给 AI**
+**排查：**
+```
+搜索 ✓ → 抓取 ✓ → 压缩 ? → 写作 ?
+│
+├── 最大概率：上下文压缩把所有内容都过滤掉了
+│   → SIMILARITY_THRESHOLD 太高
+│   → 特别是中文查询 + 英文网页（跨语言相似度天然低）
+│   → 解决：SIMILARITY_THRESHOLD 降到 0.2
+│
+├── 抓取内容本身是空的
+│   → 网页反爬，raw_content 是空字符串
+│   → 解决：SCRAPER=browser 或 firecrawl
+│
+└── LLM 写报告时"偷懒"
+    → context 有了但 LLM 没充分利用
+    → 解决：换更好的 SMART_LLM 或调整 TOTAL_WORDS
+```
 
-### 5.3 AI 协作话术示例
+### 4.5 场景 4：报告来源全是同一个网站
+
+**现象：** 报告引用来源全集中在一个域名
+
+**排查：**
+```
+来源单一
+│
+├── 搜索结果就集中 → Retriever 对该查询返回了集中结果
+│   ├── 解决 1：MAX_SEARCH_RESULTS_PER_QUERY 调大（5→10）
+│   ├── 解决 2：RETRIEVER=tavily,duckduckgo（混合多个引擎）
+│   └── 解决 3：MAX_SUBTOPICS 调大（更多搜索角度）
+│
+└── 只有一个站抓成功了 → 其他站反爬失败
+    → 看日志有没有 scraping warning
+    → 解决：SCRAPER=browser
+```
+
+### 4.6 场景 5：Deep 模式 429 Rate Limit Exceeded
+
+**现象：** deep 模式跑到一半报 429 Too Many Requests
+
+**排查：**
+```
+普通模式：~4 子查询 × 1 轮 = ~4 次搜索 + ~4 次 LLM
+Deep 模式：3(breadth) × 2(depth) × 4(concurrency) = 20-30 次并发
+
+429 来自哪个 API？
+├── LLM API → 降低 DEEP_RESEARCH_CONCURRENCY（4→2）
+├── 搜索 API → 升级 Tavily 或混合免费 Retriever
+└── Embedding API → 换本地 Embedding（EMBEDDING=ollama:...）
+```
+
+### 4.7 场景 6：报告全是英文，用户想要中文
+
+**现象：** 中文提问，报告却是英文
+
+**排查：**
+```
+→ default.py:28 → LANGUAGE = "english"（默认英文！）
+→ .env 里加 LANGUAGE=chinese 就行
+→ 如果还不行，配合 --query_domains 限制中文网站
+```
+
+### 4.8 常见故障配置速查表
+
+| 故障现象 | 最可能的原因 | 改什么 |
+|----------|------------|--------|
+| 完全无反应 | 后端没启动/端口错 | `NEXT_PUBLIC_GPTR_API_URL` |
+| 搜索卡住 | API Key 无效/过期 | `TAVILY_API_KEY` 或 `RETRIEVER` |
+| LLM 调用失败 | Key/额度/模型名错 | `OPENAI_API_KEY`、`SMART_LLM` |
+| 报告内容空 | 压缩阈值太高 | `SIMILARITY_THRESHOLD` 调低 |
+| 报告跑题 | 压缩阈值太低 | `SIMILARITY_THRESHOLD` 调高 |
+| 来源不够多元 | 搜索结果太少 | `MAX_SEARCH_RESULTS_PER_QUERY` 调大 |
+| 429 限流 | 并发太高 | `DEEP_RESEARCH_CONCURRENCY` 调低 |
+| 输出语言不对 | 语言配置 | `LANGUAGE=chinese` |
+| 抓取内容为空 | 网站反爬 | `SCRAPER=browser` |
+| 报告太短 | 字数配置 | `TOTAL_WORDS` 调大 |
+
+### 4.9 排查方法论
 
 ```
-"报告生成的时候在抓取阶段卡住了，这是错误日志：[粘贴日志]，
-帮我看看是什么原因，相关代码在 gpt_researcher/scraper/"
-
-"LLM 调用返回 429 错误，帮我看看 gpt_researcher/llm_provider/ 里
-有没有重试机制，如果没有帮我加上"
+第一步：看日志停在哪里 → 定位阶段
+第二步：判断是配置问题还是代码问题
+        配置问题（80%）→ 自己改 .env
+        代码问题（20%）→ 告诉 AI 三件事：
+          1. 卡在哪个阶段（从日志判断）
+          2. 报了什么错（贴错误日志）
+          3. 相关代码在哪个目录（从模块速查表定位）
 ```
 
 ---
 
-## 阶段六：多 Agent 模式（理解即可）
+## 五、AI 协作元技能
 
-> 目标：知道多 Agent 是什么、什么时候用、怎么定制
-
-### 6.1 概念理解
-
-```
-单 Agent 模式（默认）：
-  GPTResearcher 一个人干所有事
-
-多 Agent 模式（LangGraph）：
-  ChiefEditor 指挥一组专业 Agent 协作
-  ├── ResearchAgent  → 负责搜索和调研
-  ├── WriterAgent    → 负责写作
-  ├── EditorAgent    → 负责规划和编辑
-  ├── ReviewerAgent  → 负责质量审查
-  ├── ReviserAgent   → 负责修订
-  ├── PublisherAgent  → 负责发布
-  └── HumanAgent     → 人工审批节点
-```
-
-- [ ] 理解单 Agent vs 多 Agent 的区别和适用场景
-- [ ] 理解 LangGraph 的核心概念：**StateGraph = 状态 + 节点 + 边**
-- [ ] 知道多 Agent 模式的状态容器 `ResearchState` 包含什么字段
-- [ ] 了解 Human-in-the-Loop：可以在流程中插入人工审批节点
-
-### 6.2 你需要知道的程度
-
-**不需要会写 LangGraph 代码**，但要能对 AI 说：
-```
-"帮我在多 Agent 流程中，Writer 和 Publisher 之间加一个翻译 Agent，
-把报告翻译成中文，参考 multi_agents/agents/ 下现有 Agent 的写法"
-```
-
----
-
-## 阶段七：前端与部署（运维层面）
-
-### 7.1 部署方式选择
-
-| 方式 | 适用场景 | 命令 |
-|------|---------|------|
-| CLI 直接跑 | 本地测试、脚本调用 | `python cli.py "查询"` |
-| FastAPI 服务 | Web 服务、API 调用 | `python main.py` |
-| Docker | 标准化部署 | `docker compose up` |
-| Terraform | 云端生产环境 | `terraform apply` |
-
-- [ ] 掌握 Docker 部署的基本流程
-- [ ] 理解 `.env` 文件在 Docker 中如何注入
-- [ ] 了解前端 Next.js 通过 WebSocket 与后端通信
-
-### 7.2 AI 协作话术示例
-
-```
-"帮我配置 docker-compose.yml，让 GPT-Researcher 跑在 8080 端口，
-使用 Ollama 本地模型代替 OpenAI"
-
-"帮我写一个健康检查接口，加到 backend/server/app.py 里"
-```
-
----
-
-## 阶段八：AI 协作效率提升（元技能）
-
-> 这是 AI 编程时代最关键的能力：**如何与 AI 高效协作**
-
-### 8.1 向 AI 描述需求的模板
+### 5.1 向 AI 描述需求的模板
 
 ```markdown
 ## 需求
@@ -344,7 +461,7 @@ STRATEGIC_LLM → 复杂推理、研究规划      → 贵、强
 
 ## 上下文
 - 项目：GPT-Researcher
-- 相关模块：[从阶段一的模块速查表定位]
+- 相关模块：[从模块速查表定位]
 - 相关文件：[具体文件路径]
 
 ## 约束
@@ -356,109 +473,229 @@ STRATEGIC_LLM → 复杂推理、研究规划      → 贵、强
 - 参考现有的 [xxx] 实现方式
 ```
 
-- [ ] 练习使用这个模板向 AI（Claude Code 等）提需求
+### 5.2 高效 vs 低效 Prompt 对比
 
-### 8.2 验证 AI 输出的检查清单
+| 场景 | 低效 | 高效 |
+|------|------|------|
+| 加功能 | "帮我加个搜索引擎" | "帮我在 `retrievers/` 下新建 `my_search/`，实现 CustomRetriever 接口，接入 xxx API" |
+| 改 Bug | "报告生成有问题" | "报告生成时 `report_generation.py:L120` 附近引用格式不对，应该是 APA 但输出 MLA" |
+| 理解代码 | "解释一下这个项目" | "解释 `agent.py` 中 `conduct_research()` 的执行流程，重点说明 Retriever 如何被调度" |
+| 排障 | "跑不起来了" | "启动 `main.py` 报错 [错误信息]，`.env` 配置是 [配置]，帮我排查" |
+| 改配置 | "让报告好一点" | "帮我把 SIMILARITY_THRESHOLD 从 0.35 降到 0.25，中文查询英文网页相似度太低" |
+| 扩展功能 | "能不能加个翻译" | "帮我在多 Agent 流程 Writer 和 Publisher 之间加一个翻译 Agent，参考 `multi_agents/agents/` 下的写法" |
 
-AI 写完代码后，你需要检查：
+### 5.3 验证 AI 输出的检查清单
 
-- [ ] **功能正确性**：改动是否解决了你的需求？
+- [ ] **功能正确性**：改动是否解决了需求？
 - [ ] **影响范围**：改了哪些文件？有没有意外修改其他模块？
-- [ ] **配置兼容**：新代码是否遵循了 Config 系统的约定？
-- [ ] **接口一致**：新模块的输入输出是否与上下游模块兼容？
+- [ ] **配置兼容**：新代码是否遵循 Config 系统的约定？
+- [ ] **接口一致**：新模块的输入输出是否与上下游兼容？
 - [ ] **错误处理**：边界情况和异常是否有处理？
-- [ ] **可回滚**：如果出问题，能否快速回退？（git 习惯）
-
-### 8.3 高效 Prompt 技巧
-
-| 场景 | 低效 Prompt | 高效 Prompt |
-|------|------------|------------|
-| 加功能 | "帮我加个搜索引擎" | "帮我在 `gpt_researcher/retrievers/` 下新建一个 `my_search/` 目录，实现 CustomRetriever 接口，接入 xxx API" |
-| 改 Bug | "报告生成有问题" | "报告生成时 `report_generation.py:L120` 附近的引用格式不对，应该是 APA 格式但输出的是 MLA" |
-| 理解代码 | "解释一下这个项目" | "解释 `agent.py` 中 `conduct_research()` 方法的执行流程，重点说明 Retriever 是如何被调度的" |
-| 运维排障 | "跑不起来了" | "启动 `main.py` 时报错 [错误信息]，我的 `.env` 配置是 [配置]，帮我排查" |
-
-- [ ] 练习用精准的 Prompt 而不是模糊的描述
+- [ ] **可回滚**：git commit 了吗？出问题能快速回退？
 
 ---
 
-## 阶段九：Git 与上游同步（持续维护）
+## 六、关键架构细节补充
 
-> 你 fork 了项目并做了大量自定义，必须掌握与上游同步的能力
+### 6.1 并行执行模型
 
-### 9.1 Fork 维护策略
+```python
+# researcher.py:347-354
+context = await asyncio.gather(
+    *[self._process_sub_query(sub_query, ...) for sub_query in sub_queries]
+)
+```
 
-- [ ] 理解 Git 分支策略：
-  ```
-  upstream/master  ← 原始仓库（定期拉取更新）
-  origin/master    ← 你的 fork（合并上游 + 自定义）
-  feature/*        ← 你的功能分支
-  ```
-- [ ] 掌握同步上游的操作：
-  ```bash
-  git remote add upstream <原始仓库URL>
-  git fetch upstream
-  git merge upstream/master
-  # 解决冲突
-  ```
-- [ ] 理解冲突集中在哪些文件（你改动多的文件 = 冲突高发区）
+所有子查询并行执行。性能瓶颈不在子查询数量，在**单个子查询内的抓取速度**（`MAX_SCRAPER_WORKERS`）。
 
-### 9.2 AI 协作话术
+### 6.2 三级 LLM 在流水线中的位置
+
+| 步骤 | 用哪个 LLM | 为什么 |
+|------|-----------|--------|
+| choose_agent() | SMART_LLM | 需要理解查询意图 |
+| 子查询生成 | FAST_LLM | 简单拆分任务 |
+| 报告写作 | SMART_LLM | 需要写作质量 |
+| 复杂推理/规划 | STRATEGIC_LLM | 需要深度思考 |
+
+### 6.3 六大扩展点
+
+| 扩展点 | 接口 | 位置 | 怎么加 |
+|--------|------|------|--------|
+| 新搜索引擎 | `search(query, max_results) → List[Dict]` | `retrievers/` | 继承 CustomRetriever |
+| 新抓取器 | 输入 URL → 输出纯文本 | `scraper/` | 新建子目录 |
+| 新 LLM | `provider:model` 语法 | `.env` | LangChain 支持即可用 |
+| 新提示词 | `PROMPT_FAMILY` 配置 | `prompts.py` | 自定义 family |
+| 新报告类型 | 每类型一个 Agent | `backend/report_type/` | 新建文件 |
+| MCP 工具 | MCP Server 配置 | `mcp/` | 配置 JSON 即可 |
+
+### 6.4 多 Agent 模式概览
 
 ```
-"帮我把上游最新的更新合并到我的 fork，
-我主要修改了 [列出你改过的文件]，帮我解决冲突"
+单 Agent 模式（默认）：GPTResearcher 一个人干所有事
 
-"帮我看看上游最近的 commit，有哪些变更会影响我的自定义功能"
+多 Agent 模式（LangGraph）：
+  ChiefEditor 指挥一组专业 Agent：
+  Start → Browser(初始调研)
+        → Planner(规划)
+        → Human(人工审核) ──┐
+        → Researcher(并行研究) │ (拒绝则回到 Planner)
+        → Writer(撰写) ←─────┘
+        → Publisher(发布) → End
+```
+
+核心概念：StateGraph = 状态(`ResearchState`) + 节点(Agent) + 边(流转规则)
+不需要会写 LangGraph 代码，知道在哪里加节点就行。
+
+---
+
+# 第二部分：下一步学习计划
+
+---
+
+## 阶段 A：提示词工程（影响报告质量的另一半）
+
+> 上下文压缩决定了"喂什么给 LLM"，提示词决定了"LLM 怎么写"
+
+### 需要掌握的知识点
+
+- [ ] `prompts.py` 的组织结构——按功能分类（查询规划/搜索优化/内容摘要/报告写作/引用格式）
+- [ ] Prompt Family 机制——`get_prompt_family()` 如何加载不同风格的提示词
+- [ ] 报告写作 prompt 中的变量注入——`{query}`、`{context}`、`{report_format}` 等占位符
+- [ ] 15 种写作语调（Tone）的 prompt 差异
+- [ ] 如何自定义 PROMPT_FAMILY 实现整套风格替换
+
+**AI 协作话术：**
+```
+"帮我看 prompts.py 里 research_report 的写作 prompt，
+我想让报告更偏向数据分析风格，帮我调整 prompt 模板"
+```
+
+### 实操任务
+- [ ] 用同一个查询，分别用 `--tone objective` 和 `--tone analytical` 跑一遍，对比输出差异
+- [ ] 找到 `prompts.py` 中控制报告结构的 prompt，理解它怎么要求 LLM 组织内容
+
+---
+
+## 阶段 B：Scraper 抓取层深入（解决"抓不到"的问题）
+
+> 搜索到了但抓不下来，是实际运维中最常遇到的问题
+
+### 需要掌握的知识点
+
+- [ ] `scraper/scraper.py` 主调度器的分发逻辑
+- [ ] 7 种 Scraper 的适用场景和局限性：
+
+| Scraper | 适合 | 不适合 |
+|---------|------|--------|
+| `bs`（BeautifulSoup） | 静态 HTML | JS 渲染的 SPA 页面 |
+| `browser`（Selenium） | 动态页面 | 速度慢、需要 Chrome |
+| `pymupdf` | PDF 文档 | 网页 |
+| `arxiv` | 论文 | 普通网页 |
+| `firecrawl` | 各种页面（云服务） | 需付费 |
+| `tavily_extract` | Tavily 用户 | 非 Tavily 用户 |
+| `web_base_loader` | LangChain 生态 | 特殊格式 |
+
+- [ ] 并发控制：`MAX_SCRAPER_WORKERS` 和 `SCRAPER_RATE_LIMIT_DELAY` 的配合
+- [ ] 反爬应对策略
+
+**AI 协作话术：**
+```
+"有几个网站总是抓取失败，帮我在 scraper/ 里加个降级策略：
+bs 失败自动换 browser 重试"
 ```
 
 ---
 
-## 学习优先级总览
+## 阶段 C：Deep Research 深度研究模式（高级功能）
 
-| 优先级 | 阶段 | 内容 | 学习方式 | 预期效果 |
-|--------|------|------|---------|---------|
-| P0 | 阶段一 | 架构地图 | 看目录 + 画图 | 任何需求 3 秒定位模块 |
-| P0 | 阶段二 | 配置即控制 | 动手改 .env 跑实验 | 80% 需求不碰代码 |
-| P0 | 阶段五 | 故障定位 | 收藏决策树 + 实际排障 | 出问题能快速定位 |
-| P1 | 阶段三 | 扩展点地图 | 看接口不看实现 | 知道从哪里扩展 |
-| P1 | 阶段四 | 数据流与接口 | 理解输入输出 | 能精准描述需求 |
-| P1 | 阶段八 | AI 协作技能 | 反复练习 Prompt | 与 AI 协作效率翻倍 |
-| P2 | 阶段六 | 多 Agent 模式 | 概念理解即可 | 知道什么时候用 |
-| P2 | 阶段七 | 部署运维 | 按需查阅 | 能独立部署维护 |
-| P2 | 阶段九 | Git 与上游同步 | 建立流程 | 持续维护能力 |
+> Deep 模式是区别于普通研究的核心高级功能
+
+### 需要掌握的知识点
+
+- [ ] `skills/deep_research.py` 的多轮迭代逻辑
+- [ ] BREADTH × DEPTH × CONCURRENCY 三个参数的交互效果
+- [ ] Deep 模式与普通模式的数据流差异
+- [ ] Deep 模式的成本估算方法
+
+**实操任务：**
+- [ ] 用 `--report_type deep` 跑一次，观察迭代过程
+- [ ] 对比 `DEEP_RESEARCH_BREADTH=2 DEPTH=1` vs `BREADTH=4 DEPTH=3` 的效果和成本
+
+---
+
+## 阶段 D：后端 API 与 WebSocket（Web 服务运维）
+
+> 如果你通过 Web 界面提供服务，必须理解这一层
+
+### 需要掌握的知识点
+
+- [ ] `main.py` 和 `backend/server/app.py` 的 API 端点设计
+- [ ] WebSocket 通信协议——前端如何实时接收研究进度
+- [ ] `backend/report_type/` 下各报告类型的后端 Agent 实现
+- [ ] 报告存储机制和文件上传/下载端点
+
+**AI 协作话术：**
+```
+"帮我在 backend/server/app.py 里加一个 /api/health 健康检查端点"
+"帮我看看 WebSocket 断连后有没有自动重连机制"
+```
+
+---
+
+## 阶段 E：MCP 协议集成（最灵活的扩展方式）
+
+> MCP 是未来 AI 工具生态的标准协议
+
+### 需要掌握的知识点
+
+- [ ] MCP 基础概念（Model Context Protocol）
+- [ ] 3 种连接方式：stdio / websocket / http
+- [ ] `mcp/client.py` 的连接管理
+- [ ] `mcp/tool_selector.py` 的 LLM 辅助工具选择
+- [ ] 3 种策略：fast（用一次）/ deep（每个子查询都用）/ disabled
+- [ ] 如何写一个 MCP Server 接入自有数据源
+
+**AI 协作话术：**
+```
+"帮我写一个 MCP Server，接入公司的 Confluence Wiki，
+让 GPT-Researcher 可以搜索内部知识库"
+```
+
+---
+
+## 阶段 F：Git Fork 维护与上游同步
+
+### 需要掌握的知识点
+
+- [ ] Fork 分支策略：upstream/master ← origin/master ← feature/*
+- [ ] `git remote add upstream` + `git fetch upstream` + `git merge`
+- [ ] 理解你改动最多的文件就是冲突高发区
+- [ ] 通过 `git diff upstream/master..HEAD` 查看你所有的自定义改动
+
+---
+
+## 学习路线图总览
+
+```
+已完成 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ✅ 一、架构地图（数据流 + 模块速查 + agent.py 核心逻辑）
+  ✅ 二、配置即控制（配置系统 + 实验手册）
+  ✅ 三、上下文压缩（分块→向量过滤→输出 三步管道）
+  ✅ 四、故障排查（6 个实战场景 + 排查方法论）
+  ✅ 五、AI 协作元技能（Prompt 模板 + 验证清单）
+
+下一步 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ⬜ A. 提示词工程         → 影响报告写作质量     [P1 建议下一个学]
+  ⬜ B. Scraper 抓取层深入  → 解决"抓不到"       [P1 实际运维高频]
+  ⬜ C. Deep Research 模式  → 高级功能           [P2]
+  ⬜ D. 后端 API / WebSocket → Web 服务运维      [P2]
+  ⬜ E. MCP 协议集成        → 最灵活的扩展       [P2]
+  ⬜ F. Git Fork 维护       → 持续运维           [P2]
+```
 
 ---
 
 ## 快速参考卡片
-
-### 关键环境变量
-
-```bash
-# === 必须 ===
-OPENAI_API_KEY=xxx
-TAVILY_API_KEY=xxx
-
-# === LLM 选择（成本控制核心）===
-FAST_LLM=openai:gpt-4o-mini          # 快速任务，便宜
-SMART_LLM=openai:gpt-4.1             # 报告写作，中等
-STRATEGIC_LLM=openai:o4-mini          # 复杂推理，按需
-
-# === 搜索与抓取 ===
-RETRIEVER=tavily                      # 搜索引擎
-SCRAPER=bs                            # 抓取方式
-MAX_SEARCH_RESULTS_PER_QUERY=5        # 结果数量
-MAX_SCRAPER_WORKERS=15                # 并发数
-
-# === 报告 ===
-REPORT_TYPE=research_report           # 报告类型
-TOTAL_WORDS=1200                      # 字数
-TEMPERATURE=0.4                       # 创造性
-
-# === 调试 ===
-LANGCHAIN_TRACING_V2=true
-LANGCHAIN_API_KEY=xxx
-```
 
 ### 目录定位速记
 
@@ -474,17 +711,50 @@ LANGCHAIN_API_KEY=xxx
 要加 MCP？    → gpt_researcher/mcp/
 ```
 
+### 关键环境变量
+
+```bash
+# === 必须 ===
+OPENAI_API_KEY=xxx
+TAVILY_API_KEY=xxx
+
+# === LLM（成本控制核心）===
+FAST_LLM=openai:gpt-4o-mini
+SMART_LLM=openai:gpt-4.1
+STRATEGIC_LLM=openai:o4-mini
+
+# === 搜索与抓取 ===
+RETRIEVER=tavily
+SCRAPER=bs
+MAX_SEARCH_RESULTS_PER_QUERY=5
+MAX_SCRAPER_WORKERS=15
+
+# === 报告 ===
+REPORT_TYPE=research_report
+TOTAL_WORDS=1200
+LANGUAGE=english
+TEMPERATURE=0.4
+
+# === 压缩（报告质量关键）===
+SIMILARITY_THRESHOLD=0.35
+EMBEDDING=openai:text-embedding-3-small
+
+# === 调试 ===
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_API_KEY=xxx
+```
+
 ### 七种报告类型
 
 | 类型 | 用途 | 何时选 |
 |------|------|--------|
-| `research_report` | 标准综合报告 | 默认选这个 |
-| `detailed_report` | 深度分析 | 需要详尽分析时 |
-| `deep` | 多轮深度研究 | 复杂课题深挖时 |
-| `outline_report` | 结构大纲 | 快速了解框架时 |
-| `resource_report` | 资源清单 | 收集参考资料时 |
-| `subtopic_report` | 子主题聚焦 | 专注某个细分方向时 |
-| `custom_report` | 用户自定义 | 有特殊格式要求时 |
+| `research_report` | 标准综合报告 | 默认 |
+| `detailed_report` | 深度分析 | 需要详尽分析 |
+| `deep` | 多轮深度研究 | 复杂课题深挖 |
+| `outline_report` | 结构大纲 | 快速了解框架 |
+| `resource_report` | 资源清单 | 收集参考资料 |
+| `subtopic_report` | 子主题聚焦 | 专注细分方向 |
+| `custom_report` | 用户自定义 | 特殊格式要求 |
 
 ### 14 种搜索引擎
 
