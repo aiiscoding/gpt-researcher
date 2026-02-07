@@ -32,7 +32,14 @@ export async function GET(request: Request) {
     
     console.log(`GET ${endpoint} - Proxying request to backend`);
     
-    const response = await fetch(`${backendUrl}${endpoint}`);
+    // Forward auth headers
+    const fetchHeaders: Record<string, string> = {};
+    const authHeader = request.headers.get('authorization');
+    if (authHeader) {
+      fetchHeaders['Authorization'] = authHeader;
+    }
+
+    const response = await fetch(`${backendUrl}${endpoint}`, { headers: fetchHeaders });
     
     if (!response.ok) {
       // Handle backend errors
@@ -81,11 +88,18 @@ export async function POST(request: Request) {
     
     console.log(`POST /api/reports - Proxying request to backend for ID: ${body.id || 'unknown'}`);
     
+    // Forward auth headers
+    const postHeaders: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    const postAuthHeader = request.headers.get('authorization');
+    if (postAuthHeader) {
+      postHeaders['Authorization'] = postAuthHeader;
+    }
+
     const response = await fetch(`${backendUrl}/api/reports`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: postHeaders,
       body: JSON.stringify(body),
     });
     

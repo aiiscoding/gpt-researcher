@@ -1,0 +1,53 @@
+# Cloud deployment configuration for GPT Researcher
+# Uses the fullstack Dockerfile (backend + frontend + nginx in one container)
+#
+# Usage:
+#   1. Copy .env.example to .env and fill in your API keys
+#   2. Set authentication variables in .env:
+#      AUTH_ENABLED=true
+#      AUTH_SECRET_KEY=<your-random-secret>
+#      AUTH_USERS=user1:password1,user2:password2
+#   3. Run: docker compose -f docker-compose.cloud.yml up -d
+#
+# The app will be available on port 3000 (configure your reverse proxy accordingly)
+
+services:
+  gpt-researcher:
+    image: gptresearcher/gpt-researcher-fullstack
+    build:
+      context: ./
+      dockerfile: Dockerfile.fullstack
+    environment:
+      # Required API keys
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL}
+      TAVILY_API_KEY: ${TAVILY_API_KEY}
+      LANGCHAIN_API_KEY: ${LANGCHAIN_API_KEY}
+      LOGGING_LEVEL: INFO
+      # Image generation (optional)
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
+      IMAGE_GENERATION_ENABLED: ${IMAGE_GENERATION_ENABLED:-false}
+      IMAGE_GENERATION_MODEL: ${IMAGE_GENERATION_MODEL:-gemini-2.0-flash-preview-image-generation}
+      IMAGE_GENERATION_MAX_IMAGES: ${IMAGE_GENERATION_MAX_IMAGES:-3}
+      # Authentication (enabled by default for cloud)
+      AUTH_ENABLED: ${AUTH_ENABLED:-true}
+      AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:?Set AUTH_SECRET_KEY in .env}
+      AUTH_TOKEN_EXPIRE_HOURS: ${AUTH_TOKEN_EXPIRE_HOURS:-24}
+      AUTH_USERS: ${AUTH_USERS:-admin:admin123}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
+      # CORS (set to your domain)
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-*}
+    volumes:
+      - gptr-outputs:/usr/src/app/outputs
+      - gptr-data:/usr/src/app/data
+      - gptr-logs:/usr/src/app/logs
+      - gptr-docs:/usr/src/app/my-docs
+    restart: always
+    ports:
+      - "${PORT:-3000}:3000"
+
+volumes:
+  gptr-outputs:
+  gptr-data:
+  gptr-logs:
+  gptr-docs:

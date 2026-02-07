@@ -14,6 +14,12 @@ services:
       IMAGE_GENERATION_ENABLED: ${IMAGE_GENERATION_ENABLED:-false}
       IMAGE_GENERATION_MODEL: ${IMAGE_GENERATION_MODEL:-gemini-2.0-flash-preview-image-generation}
       IMAGE_GENERATION_MAX_IMAGES: ${IMAGE_GENERATION_MAX_IMAGES:-3}
+      # Authentication (set AUTH_ENABLED=true for cloud deployment)
+      AUTH_ENABLED: ${AUTH_ENABLED:-false}
+      AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:-gpt-researcher-default-secret-change-me}
+      AUTH_TOKEN_EXPIRE_HOURS: ${AUTH_TOKEN_EXPIRE_HOURS:-24}
+      AUTH_USERS: ${AUTH_USERS:-admin:admin123}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
     volumes:
       - ${PWD}/my-docs:/usr/src/app/my-docs:rw
       - ${PWD}/outputs:/usr/src/app/outputs:rw

@@ -1,16 +1,25 @@
 import { NextResponse } from 'next/server';
 
+function getAuthHeaders(request: Request): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const auth = request.headers.get('authorization');
+  if (auth) headers['Authorization'] = auth;
+  return headers;
+}
+
 export async function GET(
   request: Request,
   { params }: { params: { id: string } }
 ) {
   const { id } = params;
   const backendUrl = process.env.NEXT_PUBLIC_GPTR_API_URL || 'http://localhost:8000';
-  
+
   try {
     console.log(`GET /api/reports/${id} - Proxying request to backend`);
-    
-    const response = await fetch(`${backendUrl}/api/reports/${id}`);
+
+    const response = await fetch(`${backendUrl}/api/reports/${id}`, {
+      headers: getAuthHeaders(request),
+    });
     
     if (!response.ok) {
       // Handle backend errors
@@ -44,6 +53,7 @@ export async function DELETE(
     
     const response = await fetch(`${backendUrl}/api/reports/${id}`, {
       method: 'DELETE',
+      headers: getAuthHeaders(request),
     });
     
     if (!response.ok && response.status !== 404) {
@@ -91,6 +101,7 @@ export async function PUT(
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
+        ...getAuthHeaders(request),
       },
       body: JSON.stringify(body),
     });

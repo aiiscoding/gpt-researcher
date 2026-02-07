@@ -1,12 +1,19 @@
 import { NextResponse } from 'next/server';
 
+function getAuthHeaders(request: Request): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const auth = request.headers.get('authorization');
+  if (auth) headers['Authorization'] = auth;
+  return headers;
+}
+
 export async function GET(
   request: Request,
   { params }: { params: { id: string } }
 ) {
   const { id } = params;
   const backendUrl = process.env.NEXT_PUBLIC_GPTR_API_URL || 'http://localhost:8000';
-  
+
   try {
     if (!id) {
       return NextResponse.json(
@@ -14,10 +21,12 @@ export async function GET(
         { status: 400 }
       );
     }
-    
+
     console.log(`GET /api/reports/${id}/chat - Proxying request to backend`);
-    
-    const response = await fetch(`${backendUrl}/api/reports/${id}/chat`);
+
+    const response = await fetch(`${backendUrl}/api/reports/${id}/chat`, {
+      headers: getAuthHeaders(request),
+    });
     const data = await response.json();
     
     return NextResponse.json(data, { status: response.status });
@@ -63,6 +72,7 @@ export async function POST(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...getAuthHeaders(request),
       },
       body: JSON.stringify(body),
     });

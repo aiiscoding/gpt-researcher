@@ -11,12 +11,17 @@ from pathlib import Path
 warnings.filterwarnings("ignore", message="Valid config keys have changed in V2")
 warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, File, UploadFile, BackgroundTasks, HTTPException
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, File, UploadFile, BackgroundTasks, HTTPException, Depends
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from pydantic import BaseModel, ConfigDict
+
+from server.auth import (
+    AUTH_ENABLED, LoginRequest, authenticate_user, create_token,
+    require_auth, require_auth_ws
+)
 
 # Add the parent directory to sys.path to make sure we can import from server
 sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(__file__))))
@@ -142,6 +147,50 @@ DOC_PATH = os.getenv("DOC_PATH", "./my-docs")
 # Lifespan events now handled in the lifespan context manager above
 
 
+# ─── Authentication Routes ───────────────────────────────────────────────────
+
+@app.post("/api/auth/login")
+async def login(req: LoginRequest):
+    """Authenticate with preset credentials and receive a token."""
+    username = authenticate_user(req.username, req.password)
+    if not username:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    token = create_token(username)
+    response = JSONResponse(content={
+        "token": token,
+        "username": username,
+    })
+    response.set_cookie(
+        key="auth_token",
+        value=token,
+        httponly=True,
+        samesite="lax",
+        secure=os.getenv("AUTH_COOKIE_SECURE", "false").lower() == "true",
+        max_age=int(os.getenv("AUTH_TOKEN_EXPIRE_HOURS", "24")) * 3600,
+    )
+    return response
+
+
+@app.get("/api/auth/me")
+async def auth_me(username: str = Depends(require_auth)):
+    """Check if the current token is valid. Returns user info."""
+    return {"username": username, "auth_enabled": AUTH_ENABLED}
+
+
+@app.post("/api/auth/logout")
+async def logout():
+    """Clear auth cookie."""
+    response = JSONResponse(content={"success": True})
+    response.delete_cookie("auth_token")
+    return response
+
+
+@app.get("/api/auth/status")
+async def auth_status():
+    """Public endpoint: check if auth is enabled on this server."""
+    return {"auth_enabled": AUTH_ENABLED}
+
+
 # Routes
 @app.get("/", response_class=HTMLResponse)
 async def serve_frontend():
@@ -167,14 +216,14 @@ async def read_report(request: Request, research_id: str):
 
 # Simplified API routes - no database persistence
 @app.get("/api/reports")
-async def get_all_reports(report_ids: str = None):
+async def get_all_reports(report_ids: str = None, _user: str = Depends(require_auth)):
     report_ids_list = report_ids.split(",") if report_ids else None
     reports = await report_store.list_reports(report_ids_list)
     return {"reports": reports}
 
 
 @app.get("/api/reports/{research_id}")
-async def get_report_by_id(research_id: str):
+async def get_report_by_id(research_id: str, _user: str = Depends(require_auth)):
     report = await report_store.get_report(research_id)
     if report is None:
         raise HTTPException(status_code=404, detail="Report not found")
@@ -182,7 +231,7 @@ async def get_report_by_id(research_id: str):
 
 
 @app.post("/api/reports")
-async def create_or_update_report(request: Request):
+async def create_or_update_report(request: Request, _user: str = Depends(require_auth)):
     try:
         data = await request.json()
         research_id = data.get("id", "temp_id")
@@ -231,7 +280,7 @@ async def update_report(research_id: str, request: Request):
 
 
 @app.delete("/api/reports/{research_id}")
-async def delete_report(research_id: str):
+async def delete_report(research_id: str, _user: str = Depends(require_auth)):
     existed = await report_store.delete_report(research_id)
     if not existed:
         raise HTTPException(status_code=404, detail="Report not found")
@@ -239,7 +288,7 @@ async def delete_report(research_id: str):
 
 
 @app.get("/api/reports/{research_id}/chat")
-async def get_report_chat(research_id: str):
+async def get_report_chat(research_id: str, _user: str = Depends(require_auth)):
     report = await report_store.get_report(research_id)
     if report is None:
         raise HTTPException(status_code=404, detail="Report not found")
@@ -247,7 +296,7 @@ async def get_report_chat(research_id: str):
 
 
 @app.post("/api/reports/{research_id}/chat")
-async def add_report_chat_message(research_id: str, request: Request):
+async def add_report_chat_message(research_id: str, request: Request, _user: str = Depends(require_auth)):
     report = await report_store.get_report(research_id)
     if report is None:
         raise HTTPException(status_code=404, detail="Report not found")
@@ -309,7 +358,7 @@ async def write_report(research_request: ResearchRequest, research_id: str = Non
     return response
 
 @app.post("/report/")
-async def generate_report(research_request: ResearchRequest, background_tasks: BackgroundTasks):
+async def generate_report(research_request: ResearchRequest, background_tasks: BackgroundTasks, _user: str = Depends(require_auth)):
     research_id = sanitize_filename(f"task_{int(time.time())}_{research_request.task}")
 
     if research_request.generate_in_background:
@@ -322,7 +371,7 @@ async def generate_report(research_request: ResearchRequest, background_tasks: B
 
 
 @app.get("/files/")
-async def list_files():
+async def list_files(_user: str = Depends(require_auth)):
     if not os.path.exists(DOC_PATH):
         os.makedirs(DOC_PATH, exist_ok=True)
     files = os.listdir(DOC_PATH)
@@ -331,22 +380,27 @@ async def list_files():
 
 
 @app.post("/api/multi_agents")
-async def run_multi_agents():
+async def run_multi_agents(_user: str = Depends(require_auth)):
     return await execute_multi_agents(manager)
 
 
 @app.post("/upload/")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(file: UploadFile = File(...), _user: str = Depends(require_auth)):
     return await handle_file_upload(file, DOC_PATH)
 
 
 @app.delete("/files/{filename}")
-async def delete_file(filename: str):
+async def delete_file(filename: str, _user: str = Depends(require_auth)):
     return await handle_file_deletion(filename, DOC_PATH)
 
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    # Check auth for WebSocket connections
+    username = await require_auth_ws(websocket)
+    if username is None:
+        await websocket.close(code=4001, reason="Authentication required")
+        return
     await manager.connect(websocket)
     try:
         await handle_websocket_communication(websocket, manager)
@@ -360,7 +414,7 @@ async def websocket_endpoint(websocket: WebSocket):
         await manager.disconnect(websocket)
 
 @app.post("/api/chat")
-async def chat(chat_request: ChatRequest):
+async def chat(chat_request: ChatRequest, _user: str = Depends(require_auth)):
     """Process a chat request with a report and message history.
 
     Args:
@@ -404,7 +458,7 @@ async def chat(chat_request: ChatRequest):
         return {"error": str(e)}
 
 @app.post("/api/reports/{research_id}/chat")
-async def research_report_chat(research_id: str, request: Request):
+async def research_report_chat(research_id: str, request: Request, _user: str = Depends(require_auth)):
     """Handle chat requests for a specific research report.
     Directly processes the raw request data to avoid validation errors.
     """
@@ -441,13 +495,13 @@ async def research_report_chat(research_id: str, request: Request):
         return {"error": str(e)}
 
 @app.put("/api/reports/{research_id}")
-async def update_report(research_id: str, request: Request):
+async def update_report(research_id: str, request: Request, _user: str = Depends(require_auth)):
     """Update a specific research report by ID - no database configured."""
     logger.debug(f"Update requested for report {research_id} - no database configured, not persisted")
     return {"success": True, "id": research_id}
 
 @app.delete("/api/reports/{research_id}")
-async def delete_report(research_id: str):
+async def delete_report(research_id: str, _user: str = Depends(require_auth)):
     """Delete a specific research report by ID - no database configured."""
     logger.debug(f"Delete requested for report {research_id} - no database configured, nothing to delete")
     return {"success": True, "id": research_id}

@@ -3,6 +3,8 @@ import { Lexend } from "next/font/google";
 import PlausibleProvider from "next-plausible";
 import { GoogleAnalytics } from '@next/third-parties/google'
 import { ResearchHistoryProvider } from "@/hooks/ResearchHistoryContext";
+import { AuthProvider } from "@/hooks/AuthContext";
+import AuthGuard from "@/components/AuthGuard";
 import "./globals.css";
 import Script from 'next/script';
 
@@ -72,9 +74,13 @@ export default function RootLayout({
         className={`app-container ${inter.className} flex min-h-screen flex-col justify-between`}
         suppressHydrationWarning
       >
-        <ResearchHistoryProvider>
-          {children}
-        </ResearchHistoryProvider>
+        <AuthProvider>
+          <AuthGuard>
+            <ResearchHistoryProvider>
+              {children}
+            </ResearchHistoryProvider>
+          </AuthGuard>
+        </AuthProvider>
       </body>
     </html>
   );

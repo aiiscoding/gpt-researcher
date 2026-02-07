@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useResearchHistoryContext } from "@/hooks/ResearchHistoryContext";
 import { preprocessOrderedData } from "@/utils/dataProcessing";
 import { ChatBoxSettings, Data, ChatData, ChatMessage, QuestionData } from "@/types/data";
+import { authFetch } from "@/helpers/authFetch";
 import { toast } from "react-hot-toast";
 import { getAppropriateLayout } from "@/utils/getLayout";
 
@@ -135,7 +136,7 @@ export default function ResearchPage({ params }: { params: { id: string } }) {
       let foundInBackend = false;
       try {
         console.log(`Checking backend for research ${id}...`);
-        const response = await fetch(`/api/reports/${id}`);
+        const response = await authFetch(`/api/reports/${id}`);
         
         if (response.ok) {
           console.log(`Found research ${id} in backend!`);
@@ -221,7 +222,7 @@ export default function ResearchPage({ params }: { params: { id: string } }) {
             chatMessages: Array.isArray(localItem.chatMessages) ? JSON.parse(JSON.stringify(localItem.chatMessages)) : [],
           };
           
-          const saveResponse = await fetch('/api/reports', {
+          const saveResponse = await authFetch('/api/reports', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -358,7 +359,7 @@ export default function ResearchPage({ params }: { params: { id: string } }) {
       }));
       
       // Call the chat API
-      const response = await fetch(`/api/chat`, {
+      const response = await authFetch(`/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

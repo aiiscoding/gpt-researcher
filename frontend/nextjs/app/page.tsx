@@ -9,6 +9,7 @@ import { startLanggraphResearch } from '../components/Langgraph/Langgraph';
 import findDifferences from '../helpers/findDifferences';
 import { Data, ChatBoxSettings, QuestionData, ChatMessage, ChatData } from '../types/data';
 import { preprocessOrderedData } from '../utils/dataProcessing';
+import { authFetch } from '../helpers/authFetch';
 import { toast } from "react-hot-toast";
 import { v4 as uuidv4 } from 'uuid';
 
@@ -164,7 +165,7 @@ export default function Home() {
     if (isMobile) {
       try {
         // Direct API call instead of websockets
-        const response = await fetch('/api/chat', {
+        const response = await authFetch('/api/chat', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -254,7 +255,7 @@ export default function Home() {
       }));
       
       // Call the chat API
-      const response = await fetch(`/api/chat`, {
+      const response = await authFetch(`/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -347,7 +348,7 @@ export default function Home() {
         );
         
         // Make direct API call to get response
-        const response = await fetch('/api/chat', {
+        const response = await authFetch('/api/chat', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -474,7 +475,7 @@ export default function Home() {
       );
       
       // Make direct API call instead of using websockets
-      const response = await fetch('/api/chat', {
+      const response = await authFetch('/api/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -576,7 +577,7 @@ export default function Home() {
     
     try {
       // Direct API call instead of websockets
-      const response = await fetch('/api/chat', {
+      const response = await authFetch('/api/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

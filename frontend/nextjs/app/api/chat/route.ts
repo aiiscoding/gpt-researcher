@@ -18,11 +18,18 @@ export async function POST(request: Request) {
     
     console.log(`POST /api/chat - Proxying request to backend`);
     
+    // Forward auth headers to backend
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    const authHeader = request.headers.get('authorization');
+    if (authHeader) {
+      headers['Authorization'] = authHeader;
+    }
+
     const response = await fetch(`${backendUrl}/api/chat`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify(body),
     });
     

@@ -1,6 +1,7 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
 import { Data, ChatBoxSettings, QuestionData } from '../types/data';
 import { getHost } from '../helpers/getHost';
+import { getAuthWsUrl } from '../helpers/authFetch';
 
 export const useWebSocket = (
   setOrderedData: React.Dispatch<React.SetStateAction<Data[]>>,
@@ -60,7 +61,7 @@ export const useWebSocket = (
       let fullHost = getHost()
       const protocol = fullHost.includes('https') ? 'wss:' : 'ws:'
       const cleanHost = fullHost.replace('http://', '').replace('https://', '')
-      const ws_uri = `${protocol}//${cleanHost}/ws`
+      const ws_uri = getAuthWsUrl(`${protocol}//${cleanHost}/ws`)
 
       console.log(`Creating new WebSocket connection to ${ws_uri}`);
       const newSocket = new WebSocket(ws_uri);
